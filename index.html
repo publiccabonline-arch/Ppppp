@@ -1,0 +1,987 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Public Cab & Multi-Services</title>
+    
+    <!-- Dynamic Manifest Injection for PWA -->
+    <script id="pwa-manifest"></script>
+    <meta name="theme-color" content="#ffcc00">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="icon" id="appFavicon" href="https://cdn-icons-png.flaticon.com/512/3202/3202926.png">
+
+    <!-- Tailwind CSS & FontAwesome Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Leaflet.js Maps CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Firebase SDK v9 (Compat) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+        * { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+        .radar-sweep {
+            background: conic-gradient(from 0deg at 50% 50%, rgba(132, 204, 22, 0.4) 0deg, rgba(132, 204, 22, 0) 60deg, rgba(132, 204, 22, 0) 360deg);
+            animation: spin 3s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .pulse-ring {
+            box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.7);
+            animation: pulse-animation 1.6s infinite;
+        }
+        @keyframes pulse-animation {
+            0% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(250, 204, 21, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
+        }
+
+        #map { height: 100%; width: 100%; z-index: 1; }
+        .leaflet-container { background: #1a1e24 !important; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 flex flex-col h-screen overflow-hidden select-none">
+
+    <!-- FLOATING AUDIO VOICE MUTE/UNMUTE BUTTON -->
+    <button onclick="toggleSpeechMute()" id="audioToggleBtn" title="Toggle Voice Alerts" class="fixed top-16 right-4 z-[999] bg-gray-900 text-yellow-400 p-3 rounded-full shadow-2xl border-2 border-yellow-400/50 flex items-center justify-center hover:scale-105 active:scale-95 transition-all">
+        <i class="fa-solid fa-volume-high text-lg" id="audioIcon"></i>
+    </button>
+
+    <!-- PWA INSTALL PROMPT BANNER -->
+    <div id="pwaInstallBanner" class="hidden fixed top-0 inset-x-0 z-[1000] bg-black text-white p-3 px-4 flex items-center justify-between shadow-2xl border-b border-yellow-400">
+        <div class="flex items-center space-x-3">
+            <img id="pwaBannerLogo" src="https://cdn-icons-png.flaticon.com/512/3202/3202926.png" class="w-9 h-9 rounded-full border border-yellow-400 object-cover">
+            <div>
+                <div class="font-bold text-xs text-yellow-400" id="pwaBannerTitle">Install Public Cab App</div>
+                <div class="text-[10px] text-gray-300">Fast, direct desktop & mobile booking app</div>
+            </div>
+        </div>
+        <div class="flex items-center space-x-2">
+            <button onclick="installPWA()" class="bg-yellow-400 text-black px-3 py-1.5 rounded-lg text-xs font-bold shadow hover:bg-yellow-300">Install</button>
+            <button onclick="dismissPWA()" class="text-gray-400 p-1"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+    </div>
+
+    <!-- APP MAIN HEADER -->
+    <header id="mainHeader" class="bg-yellow-400 px-4 py-3 flex items-center justify-between shadow-md z-20 transition-colors duration-300">
+        <!-- Logo & Title (21 Clicks triggers Secret Password Prompt) -->
+        <div onclick="handleLogoSecretClicks()" class="flex items-center space-x-3 cursor-pointer group active:scale-95 transition-transform">
+            <img id="headerAppLogo" src="https://cdn-icons-png.flaticon.com/512/3202/3202926.png" class="w-10 h-10 rounded-full border-2 border-black object-cover shadow-sm">
+            <div>
+                <h1 id="headerAppName" class="font-black text-lg text-black tracking-tight leading-none">Public Cab</h1>
+                <p id="headerSubtitle" class="text-[11px] font-semibold text-gray-800">Customer Mode</p>
+            </div>
+        </div>
+
+        <!-- Mode Switcher (Customer vs Driver Partner) -->
+        <div class="bg-black/90 p-1 rounded-full flex items-center shadow-inner">
+            <button id="btnModeCustomer" onclick="switchMainMode('customer')" class="px-3.5 py-1.5 rounded-full text-xs font-bold transition-all bg-yellow-400 text-black shadow">Customer</button>
+            <button id="btnModeDriver" onclick="switchMainMode('driver')" class="px-3.5 py-1.5 rounded-full text-xs font-bold transition-all text-gray-300 hover:text-white">Driver</button>
+        </div>
+    </header>
+
+    <!-- CONTENT CONTAINER -->
+    <main class="flex-1 relative overflow-y-auto pb-20">
+
+        <!-- CUSTOMER PANEL VIEW -->
+        <section id="panelCustomer" class="h-full flex flex-col relative">
+            
+            <!-- Map Engine -->
+            <div id="map" class="w-full flex-1 min-h-[280px]"></div>
+
+            <!-- Booking Overlay Drawer -->
+            <div class="bg-white rounded-t-3xl shadow-2xl p-4 z-10 -mt-6 border-t border-gray-100 flex flex-col space-y-3">
+                
+                <!-- Safety Warning -->
+                <div class="bg-amber-50 border-l-4 border-amber-500 p-2.5 rounded-r-lg flex items-center space-x-3">
+                    <i class="fa-solid fa-shield-halved text-amber-600 text-lg"></i>
+                    <p class="text-[11px] text-amber-900 font-medium leading-snug">
+                        <span class="font-bold">Safety Warning:</span> Always check Company Logo & Registration Number before entering vehicle.
+                    </p>
+                </div>
+
+                <!-- Locations Inputs -->
+                <div class="space-y-2 bg-gray-50 p-2.5 rounded-2xl border border-gray-200">
+                    <div class="flex items-center space-x-3 px-2">
+                        <i class="fa-solid fa-circle text-green-600 text-xs"></i>
+                        <input type="text" id="custPickupInput" readonly value="Detecting current GPS location..." class="w-full text-xs font-semibold text-gray-700 bg-transparent focus:outline-none">
+                    </div>
+                    <div class="border-t border-gray-200 my-1"></div>
+                    <div class="flex items-center space-x-3 px-2">
+                        <i class="fa-solid fa-location-dot text-red-600 text-sm"></i>
+                        <input type="text" id="custDropInput" placeholder="Where to? (Drop Location)" oninput="handleLocationSearch(this.value)" class="w-full text-xs font-bold text-gray-900 bg-transparent focus:outline-none placeholder-gray-400">
+                    </div>
+                </div>
+
+                <!-- Search Results Autocomplete -->
+                <div id="locationSearchResults" class="hidden max-h-36 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg divide-y divide-gray-100"></div>
+
+                <!-- Vehicle Selector Grid -->
+                <div>
+                    <label class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">Select Vehicle / Service</label>
+                    <div class="grid grid-cols-4 gap-2" id="categoryGrid"></div>
+                </div>
+
+                <!-- Fare & Action Button -->
+                <div class="pt-1 flex items-center justify-between space-x-3">
+                    <div class="flex flex-col">
+                        <span class="text-[10px] text-gray-500 font-bold uppercase">Estimated Fare</span>
+                        <span class="text-2xl font-black text-gray-900" id="displayEstimatedFare">₹0</span>
+                        <span class="text-[10px] text-green-600 font-semibold" id="distCalcLabel">0.0 KM Distance</span>
+                    </div>
+                    <button onclick="requestRideBooking()" class="flex-1 bg-gray-900 hover:bg-black text-yellow-400 py-3.5 rounded-2xl font-black text-sm tracking-wide shadow-xl active:scale-95 transition-all flex items-center justify-center space-x-2">
+                        <span>BOOK RIDE NOW</span>
+                        <i class="fa-solid fa-arrow-right text-xs"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- RADAR BROADCAST MODAL (CUSTOMER SEARCHING DRIVER) -->
+            <div id="radarModal" class="hidden fixed inset-0 z-[800] bg-gray-950/95 backdrop-blur-md flex flex-col items-center justify-between p-6 text-white">
+                <div class="w-full flex justify-between items-center">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-3 h-3 bg-green-500 rounded-full animate-ping"></div>
+                        <span class="text-xs font-bold uppercase tracking-wider text-green-400">Broadcasting Request</span>
+                    </div>
+                    <button onclick="cancelRideByCustomer()" class="bg-red-600/80 hover:bg-red-600 text-white text-xs px-3 py-1.5 rounded-full font-bold">Cancel</button>
+                </div>
+
+                <div class="relative w-72 h-72 rounded-full border border-green-500/30 flex items-center justify-center my-auto shadow-[0_0_50px_rgba(34,197,94,0.2)]">
+                    <div class="absolute inset-0 rounded-full border border-green-500/20"></div>
+                    <div class="absolute inset-12 rounded-full border border-green-500/20"></div>
+                    <div class="absolute inset-24 rounded-full border border-green-500/20"></div>
+                    <div class="absolute inset-0 rounded-full radar-sweep"></div>
+                    <img src="https://cdn-icons-png.flaticon.com/512/3202/3202926.png" class="w-16 h-16 rounded-full border-2 border-yellow-400 relative z-10 shadow-2xl">
+                </div>
+
+                <div class="w-full text-center space-y-2 mb-8">
+                    <h2 class="text-xl font-black tracking-tight text-yellow-400">Searching Nearby Drivers...</h2>
+                    <p class="text-xs text-gray-400">Broadcast sent to all drivers in your category.</p>
+                    <div id="radarStatusText" class="text-xs font-semibold text-green-400 pt-2">Connecting to live matching engine...</div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- DRIVER PARTNER PANEL VIEW -->
+        <section id="panelDriver" class="hidden p-4 space-y-4">
+            
+            <div class="bg-red-950/90 border border-red-500/50 p-3 rounded-2xl flex items-start space-x-3 text-red-200 shadow-lg">
+                <i class="fa-solid fa-triangle-exclamation text-red-500 text-lg mt-0.5"></i>
+                <div>
+                    <h4 class="text-xs font-bold text-red-400 uppercase">Police & Regulatory Notice</h4>
+                    <p class="text-[11px] leading-snug mt-0.5">Driving without company authorization logo & matching vehicle registration number is strictly prohibited.</p>
+                </div>
+            </div>
+
+            <div class="bg-gray-900 text-white rounded-3xl p-5 shadow-2xl border border-gray-800 flex items-center justify-between">
+                <div>
+                    <span class="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Duty Status</span>
+                    <h3 id="driverDutyStateLabel" class="text-lg font-black text-red-500">OFF DUTY</h3>
+                    <p class="text-[10px] text-gray-400 mt-1" id="driverSubBadge">Subscription Check Enabled</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="driverDutyToggle" onchange="toggleDriverDuty(this.checked)" class="sr-only peer">
+                    <div class="w-14 h-8 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-7 after:w-7 after:transition-all peer-checked:bg-green-500"></div>
+                </label>
+            </div>
+
+            <div class="bg-gradient-to-br from-blue-900 to-indigo-950 text-white rounded-3xl p-5 shadow-xl border border-blue-800/50 space-y-3">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <span class="text-[10px] text-blue-300 font-bold uppercase tracking-wider">Today's Earnings</span>
+                        <div class="text-3xl font-black text-yellow-400">₹<span id="driverEarningsToday">0.00</span></div>
+                    </div>
+                    <span class="bg-blue-800/80 text-blue-200 text-[10px] font-bold px-3 py-1 rounded-full border border-blue-600">Active Partner</span>
+                </div>
+                <div class="bg-black/30 p-2.5 rounded-xl flex items-center justify-between text-xs">
+                    <span class="text-gray-300 font-medium">Completed Rides Today</span>
+                    <span class="font-bold text-white" id="driverRidesCount">0 Rides</span>
+                </div>
+            </div>
+
+            <!-- Driver Registration Form -->
+            <div id="driverAuthBox" class="bg-white rounded-3xl p-5 shadow-lg border border-gray-200 space-y-3">
+                <h3 class="font-black text-base text-gray-900 flex items-center space-x-2">
+                    <i class="fa-solid fa-id-card text-yellow-500"></i>
+                    <span>Driver Registration & Verification</span>
+                </h3>
+                <div class="space-y-2 text-xs">
+                    <input type="text" id="drvRegName" placeholder="Full Name" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                    <input type="tel" id="drvRegPhone" placeholder="Mobile Phone Number" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                    <select id="drvRegVehicleCat" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                        <option value="Bike">Bike Partner</option>
+                        <option value="Toto">Toto Partner</option>
+                        <option value="Auto">Auto Partner</option>
+                        <option value="Cab">Cab / 4-Wheeler Partner</option>
+                        <option value="Parcel">Parcel Delivery Partner</option>
+                        <option value="Ambulance">Ambulance Service Partner</option>
+                    </select>
+                    <input type="text" id="drvRegVehicleNo" placeholder="Vehicle Registration No (e.g. WB 24 X 1234)" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                    <button onclick="submitDriverRegistration()" class="w-full bg-black text-yellow-400 py-3 rounded-xl font-black shadow hover:bg-gray-900">SUBMIT FOR APPROVAL</button>
+                </div>
+            </div>
+
+            <!-- Incoming Ride Requests Stream -->
+            <div class="space-y-3">
+                <h3 class="font-black text-xs text-gray-500 uppercase tracking-wider">Live Booking Requests Feed</h3>
+                <div id="driverRideRequestsFeed" class="space-y-3">
+                    <div class="bg-white p-6 rounded-3xl text-center border border-dashed border-gray-300 text-gray-400 text-xs font-semibold">
+                        Go ON DUTY to receive nearby ride requests.
+                    </div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- MULTI-SERVICES PANEL VIEW -->
+        <section id="panelServices" class="hidden p-4 space-y-4">
+            <div class="bg-yellow-400 p-4 rounded-3xl text-black shadow-lg flex items-center justify-between">
+                <div>
+                    <h2 class="font-black text-lg leading-tight">Services Directory</h2>
+                    <p class="text-xs font-semibold text-gray-800">Mechanics & Local Shops</p>
+                </div>
+                <i class="fa-solid fa-wrench text-3xl opacity-80"></i>
+            </div>
+
+            <div class="grid grid-cols-3 gap-2 bg-gray-200 p-1 rounded-2xl text-xs font-bold">
+                <button onclick="switchServiceSubTab('mechanicList')" id="stTabMech" class="py-2.5 rounded-xl bg-white text-black shadow">Mechanics</button>
+                <button onclick="switchServiceSubTab('shopList')" id="stTabShop" class="py-2.5 rounded-xl text-gray-600">Shops</button>
+                <button onclick="switchServiceSubTab('providerPortal')" id="stTabPortal" class="py-2.5 rounded-xl text-gray-600">Partner Join</button>
+            </div>
+
+            <div id="srvSubMechanics" class="space-y-3">
+                <div id="mechanicsDirectory" class="space-y-3"></div>
+            </div>
+
+            <div id="srvSubShops" class="hidden space-y-3">
+                <div id="shopsDirectory" class="space-y-3"></div>
+            </div>
+
+            <div id="srvSubPortal" class="hidden space-y-4">
+                <div class="bg-white p-5 rounded-3xl border border-gray-200 shadow-sm space-y-3">
+                    <h3 class="font-black text-sm text-gray-900">Mechanic / Shop Registration</h3>
+                    <p class="text-[11px] text-gray-500">Note: Keep your Mobile Number and Password safe for subscription renewals.</p>
+                    
+                    <div class="space-y-2 text-xs">
+                        <select id="spType" class="w-full p-3 bg-gray-50 border rounded-xl font-bold">
+                            <option value="Mechanic">Register as Mechanic</option>
+                            <option value="Shop">Register as Local Shop / Store</option>
+                        </select>
+                        <input type="text" id="spTitle" placeholder="Mechanic Name or Shop Name" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                        <input type="tel" id="spPhone" placeholder="Contact Mobile Number" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                        <input type="password" id="spPassword" placeholder="Set Password" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                        <input type="text" id="spCategory" placeholder="Specialty (e.g. Bike Repair / Grocery)" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                        <input type="text" id="spPhotoUrl" placeholder="Photo URL" class="w-full p-3 bg-gray-50 border rounded-xl font-medium">
+                        <button onclick="registerServiceProvider()" class="w-full bg-yellow-400 text-black font-black py-3 rounded-xl shadow">REGISTER SERVICE</button>
+                    </div>
+                </div>
+
+                <div class="bg-gray-900 text-white p-5 rounded-3xl border border-gray-800 space-y-3">
+                    <h3 class="font-black text-sm text-yellow-400">Subscription Payment Submission</h3>
+                    <div class="bg-black/50 p-3 rounded-2xl text-xs space-y-1">
+                        <p class="text-gray-300 font-semibold">UPI ID: <span id="spDisplayUpi" class="text-yellow-400 font-bold select-all">company@upi</span></p>
+                        <p class="text-gray-400 text-[10px]">Pay fee and submit Transaction ID / Reference below for Admin approval.</p>
+                    </div>
+                    <div class="space-y-2 text-xs">
+                        <input type="text" id="spSubPhone" placeholder="Registered Phone Number" class="w-full p-3 bg-gray-800 border border-gray-700 rounded-xl text-white">
+                        <input type="text" id="spUpiTxnRef" placeholder="UPI UTR / Transaction Reference ID" class="w-full p-3 bg-gray-800 border border-gray-700 rounded-xl text-white">
+                        <button onclick="submitSubscriptionProof()" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-xl shadow">SUBMIT PROOF</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- HISTORY VIEW -->
+        <section id="panelHistory" class="hidden p-4 space-y-3">
+            <h2 class="font-black text-base text-gray-900 flex items-center space-x-2">
+                <i class="fa-solid fa-clock-rotate-left text-yellow-500"></i>
+                <span>Ride & Service History</span>
+            </h2>
+            <div id="historyListFeed" class="space-y-3">
+                <div class="bg-white p-6 rounded-3xl text-center text-xs font-semibold text-gray-400 border">No previous ride history found.</div>
+            </div>
+        </section>
+
+
+        <!-- SUPPORT VIEW -->
+        <section id="panelSupport" class="hidden p-4 space-y-4">
+            <div class="bg-black text-white p-6 rounded-3xl shadow-xl space-y-2">
+                <h2 class="font-black text-xl text-yellow-400">24/7 Customer Support</h2>
+                <p class="text-xs text-gray-300">Have queries regarding rides, parcel tracking, or provider listings?</p>
+            </div>
+            <div class="bg-white p-5 rounded-3xl border border-gray-200 space-y-3">
+                <div class="flex items-center space-x-4 p-3 bg-gray-50 rounded-2xl">
+                    <i class="fa-solid fa-headset text-yellow-500 text-2xl"></i>
+                    <div>
+                        <h4 class="font-bold text-xs text-gray-900">Helpline Center</h4>
+                        <p class="text-xs font-bold text-blue-600" id="supportHelplineNumber">+91 1800-CAB-HELP</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- HIDDEN MASTER ADMIN CONTROL PANEL -->
+        <section id="panelAdmin" class="hidden p-4 space-y-5 bg-gray-900 text-white min-h-full">
+            <div class="flex justify-between items-center border-b border-gray-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-user-shield text-yellow-400 text-xl"></i>
+                    <h2 class="font-black text-base text-yellow-400">Master Admin Control Panel</h2>
+                </div>
+                <button onclick="switchMainMode('customer')" class="bg-red-600/80 text-white text-xs px-3 py-1.5 rounded-xl font-bold">Exit Admin</button>
+            </div>
+
+            <div class="bg-gray-800 p-4 rounded-2xl space-y-3 border border-gray-700">
+                <h3 class="font-bold text-xs text-yellow-400 uppercase tracking-wider">Global Settings</h3>
+                <div class="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                        <label class="block text-gray-400 text-[10px] mb-1">Company App Name</label>
+                        <input type="text" id="admAppName" class="w-full bg-gray-900 p-2.5 rounded-xl border border-gray-700 font-bold text-white">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 text-[10px] mb-1">Company Logo URL</label>
+                        <input type="text" id="admLogoUrl" class="w-full bg-gray-900 p-2.5 rounded-xl border border-gray-700 font-medium text-white">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 text-[10px] mb-1">UPI ID for Subscriptions</label>
+                        <input type="text" id="admUpiId" class="w-full bg-gray-900 p-2.5 rounded-xl border border-gray-700 font-medium text-white">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 text-[10px] mb-1">Subscription Mode</label>
+                        <select id="admSubMode" class="w-full bg-gray-900 p-2.5 rounded-xl border border-gray-700 font-bold text-yellow-400">
+                            <option value="off">OFF (Free Mode 24/7)</option>
+                            <option value="on">ON (Paid Mode)</option>
+                        </select>
+                    </div>
+                </div>
+                <button onclick="saveAdminGlobalSettings()" class="w-full bg-yellow-400 text-black py-2.5 rounded-xl font-black text-xs shadow hover:bg-yellow-300">SAVE GLOBAL CONFIGURATION</button>
+            </div>
+
+            <div class="bg-gray-800 p-4 rounded-2xl space-y-3 border border-gray-700">
+                <h3 class="font-bold text-xs text-yellow-400 uppercase tracking-wider">Category Pricing (Base + Per KM)</h3>
+                <div class="grid grid-cols-2 gap-2 text-xs" id="adminFarePricingGrid"></div>
+                <button onclick="saveAdminFarePricing()" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-bold text-xs shadow hover:bg-blue-500">UPDATE PRICING RATES</button>
+            </div>
+
+            <div class="bg-gray-800 p-4 rounded-2xl space-y-3 border border-gray-700">
+                <h3 class="font-bold text-xs text-yellow-400 uppercase tracking-wider">Approval & Subscription Verification Queue</h3>
+                <div id="adminApprovalList" class="space-y-2 text-xs"></div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- BOTTOM NAVIGATION -->
+    <nav class="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 px-2 py-2 flex justify-around items-center z-30 shadow-2xl">
+        <button onclick="navigateTab('customer')" id="navHome" class="flex flex-col items-center text-yellow-500 space-y-0.5">
+            <i class="fa-solid fa-house text-lg"></i>
+            <span class="text-[10px] font-bold">Home</span>
+        </button>
+        <button onclick="triggerDirectCategory('Parcel')" id="navParcel" class="flex flex-col items-center text-gray-500 space-y-0.5 hover:text-yellow-500">
+            <i class="fa-solid fa-box-open text-lg"></i>
+            <span class="text-[10px] font-bold">Parcel</span>
+        </button>
+        <button onclick="triggerDirectCategory('Ambulance')" id="navAmbulance" class="flex flex-col items-center text-gray-500 space-y-0.5 hover:text-red-500">
+            <i class="fa-solid fa-truck-medical text-lg text-red-600"></i>
+            <span class="text-[10px] font-bold text-red-600">Ambulance</span>
+        </button>
+        <button onclick="navigateTab('services')" id="navServices" class="flex flex-col items-center text-gray-500 space-y-0.5 hover:text-yellow-500">
+            <i class="fa-solid fa-wrench text-lg"></i>
+            <span class="text-[10px] font-bold">Services</span>
+        </button>
+        <button onclick="navigateTab('history')" id="navHistory" class="flex flex-col items-center text-gray-500 space-y-0.5 hover:text-yellow-500">
+            <i class="fa-solid fa-clock-rotate-left text-lg"></i>
+            <span class="text-[10px] font-bold">History</span>
+        </button>
+        <button onclick="navigateTab('support')" id="navSupport" class="flex flex-col items-center text-gray-500 space-y-0.5 hover:text-yellow-500">
+            <i class="fa-solid fa-headset text-lg"></i>
+            <span class="text-[10px] font-bold">Support</span>
+        </button>
+    </nav>
+
+
+    <!-- APPLICATION JS ENGINE -->
+    <script>
+        // FIREBASE INITIALIZATION
+        const firebaseConfig = {
+            apiKey: "AIzaSyDJmu9uD5rT5ee1jNLpMQaTVIa_-yTrPzw",
+            authDomain: "public-service-11054.firebaseapp.com",
+            databaseURL: "https://public-service-11054-default-rtdb.firebaseio.com",
+            projectId: "public-service-11054",
+            storageBucket: "public-service-11054.firebasestorage.app",
+            messagingSenderId: "639313474404",
+            appId: "1:639313474404:web:9ac4645e521021c044c071",
+            measurementId: "G-ZMCRHQ4VC3"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        let appState = {
+            currentMode: 'customer',
+            speechMuted: false,
+            secretClickCount: 0,
+            userLocation: { lat: 22.5726, lng: 88.3639 },
+            selectedCategory: 'Bike',
+            selectedDistanceKm: 2.5,
+            calculatedFare: 40,
+            activeRideKey: null,
+            driverOnline: false,
+            pwaDeferredPrompt: null,
+            adminConfig: {
+                appName: "Public Cab",
+                logoUrl: "https://cdn-icons-png.flaticon.com/512/3202/3202926.png",
+                upiId: "company@upi",
+                subscriptionMode: "off"
+            },
+            categoryRates: {
+                Bike: { base: 20, perKm: 8, icon: "fa-motorcycle" },
+                Toto: { base: 25, perKm: 10, icon: "fa-shuttle-van" },
+                Auto: { base: 30, perKm: 12, icon: "fa-car-side" },
+                Cab: { base: 50, perKm: 20, icon: "fa-car" },
+                Parcel: { base: 30, perKm: 10, icon: "fa-box" },
+                Ambulance: { base: 100, perKm: 25, icon: "fa-truck-medical" }
+            }
+        };
+
+        // BENGALI AUDIO ANNOUNCEMENTS UTILITY
+        function speakBengali(text) {
+            if (appState.speechMuted || !('speechSynthesis' in window)) return;
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'bn-IN';
+            utterance.rate = 0.95;
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function toggleSpeechMute() {
+            appState.speechMuted = !appState.speechMuted;
+            const icon = document.getElementById('audioIcon');
+            if (appState.speechMuted) {
+                icon.className = "fa-solid fa-volume-xmark text-red-400";
+            } else {
+                icon.className = "fa-solid fa-volume-high text-yellow-400";
+                speakBengali("অডিও মেসেজ সসংবাদ বার্তা চালু করা হলো।");
+            }
+        }
+
+        // MAP LOGIC
+        let map, userMarker, routePolyline;
+        function initLeafletMap() {
+            map = L.map('map', { zoomControl: false }).setView([appState.userLocation.lat, appState.userLocation.lng], 14);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+            const customIcon = L.divIcon({
+                className: 'custom-pin',
+                html: `<div class="w-8 h-8 bg-black border-2 border-yellow-400 rounded-full flex items-center justify-center text-yellow-400 shadow-xl pulse-ring"><i class="fa-solid fa-street-view"></i></div>`
+            });
+            userMarker = L.marker([appState.userLocation.lat, appState.userLocation.lng], { icon: customIcon }).addTo(map);
+
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(pos => {
+                    appState.userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    map.setView([appState.userLocation.lat, appState.userLocation.lng], 15);
+                    userMarker.setLatLng([appState.userLocation.lat, appState.userLocation.lng]);
+                    document.getElementById('custPickupInput').value = `GPS: ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)} (Current Location)`;
+                });
+            }
+        }
+
+        function renderCategoryGrid() {
+            const grid = document.getElementById('categoryGrid');
+            grid.innerHTML = '';
+            
+            Object.keys(appState.categoryRates).forEach(cat => {
+                const item = appState.categoryRates[cat];
+                const isSelected = cat === appState.selectedCategory;
+                const estFare = Math.round(item.base + (item.perKm * appState.selectedDistanceKm));
+
+                const card = document.createElement('div');
+                card.onclick = () => selectCategory(cat);
+                card.className = `p-2.5 rounded-2xl border text-center cursor-pointer transition-all ${
+                    isSelected ? 'bg-yellow-400 border-black text-black font-extrabold shadow-lg scale-105' : 'bg-gray-50 border-gray-200 text-gray-700 font-semibold hover:bg-gray-100'
+                }`;
+                card.innerHTML = `
+                    <i class="fa-solid ${item.icon} text-xl mb-1 block ${isSelected ? 'text-black' : 'text-yellow-600'}"></i>
+                    <div class="text-xs leading-tight">${cat}</div>
+                    <div class="text-[10px] opacity-80 mt-0.5">₹${estFare}</div>
+                `;
+                grid.appendChild(card);
+            });
+
+            const currentObj = appState.categoryRates[appState.selectedCategory];
+            appState.calculatedFare = Math.round(currentObj.base + (currentObj.perKm * appState.selectedDistanceKm));
+            document.getElementById('displayEstimatedFare').innerText = `₹${appState.calculatedFare}`;
+            document.getElementById('distCalcLabel').innerText = `${appState.selectedDistanceKm.toFixed(1)} KM Distance`;
+        }
+
+        function selectCategory(catName) {
+            appState.selectedCategory = catName;
+            renderCategoryGrid();
+            speakBengali(`${catName} ক্যাটাগরি সিলেক্ট করা হয়েছে। আনুমানিক ভাড়া ${appState.calculatedFare} টাকা।`);
+        }
+
+        function handleLocationSearch(query) {
+            const box = document.getElementById('locationSearchResults');
+            if (!query.trim()) { box.classList.add('hidden'); return; }
+            
+            box.classList.remove('hidden');
+            const mockLocations = [
+                `${query} Main Station`,
+                `${query} City Center`,
+                `${query} Bus Stand`,
+                `${query} Central Hospital`
+            ];
+
+            box.innerHTML = mockLocations.map(loc => `
+                <div onclick="selectDestination('${loc}')" class="p-2.5 hover:bg-yellow-50 cursor-pointer flex items-center space-x-3 text-xs font-semibold">
+                    <i class="fa-solid fa-location-dot text-red-500"></i>
+                    <span>${loc}</span>
+                </div>
+            `).join('');
+        }
+
+        function selectDestination(locName) {
+            document.getElementById('custDropInput').value = locName;
+            document.getElementById('locationSearchResults').classList.add('hidden');
+            
+            appState.selectedDistanceKm = 4.2;
+            renderCategoryGrid();
+
+            if (routePolyline) map.removeLayer(routePolyline);
+            const dropLatLng = [appState.userLocation.lat + 0.02, appState.userLocation.lng + 0.02];
+            routePolyline = L.polyline([
+                [appState.userLocation.lat, appState.userLocation.lng],
+                dropLatLng
+            ], { color: '#eab308', weight: 5, dashArray: '8, 8' }).addTo(map);
+
+            map.fitBounds(routePolyline.getBounds(), { padding: [30, 30] });
+            speakBengali(`গন্তব্য নির্বাচন করা হয়েছে। দূরত্ব চার দশমিক দুই কিলোমিটার।`);
+        }
+
+        function requestRideBooking() {
+            const dropVal = document.getElementById('custDropInput').value;
+            if (!dropVal) { alert("Please enter a drop location destination!"); return; }
+
+            const rideData = {
+                category: appState.selectedCategory,
+                fare: appState.calculatedFare,
+                pickup: "Current GPS Location",
+                drop: dropVal,
+                status: "SEARCHING",
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            };
+
+            const newRideRef = db.ref('rides').push();
+            appState.activeRideKey = newRideRef.key;
+            newRideRef.set(rideData);
+
+            document.getElementById('radarModal').classList.remove('hidden');
+            speakBengali("রাইড বুকিং এর জন্য অনুরোধ পাঠানো হচ্ছে। অনুগ্রহ করে ড্রাইভার কনফার্ম করা পর্যন্ত অপেক্ষা করুন।");
+
+            newRideRef.on('value', snapshot => {
+                const val = snapshot.val();
+                if (val && val.status === 'ACCEPTED') {
+                    document.getElementById('radarStatusText').innerText = `Driver Assigned! Vehicle No: ${val.driverVehicle || 'WB-24-1234'}`;
+                    speakBengali("আপনার ড্রাইভার বুকিং গ্রহণ করেছেন। কিছুক্ষণের মধ্যেই পৌঁছে যাবেন।");
+                    setTimeout(() => {
+                        document.getElementById('radarModal').classList.add('hidden');
+                        alert(`Ride Accepted by Driver! Contact: ${val.driverPhone || '9876543210'}`);
+                    }, 2500);
+                }
+            });
+        }
+
+        function cancelRideByCustomer() {
+            if (appState.activeRideKey) {
+                db.ref(`rides/${appState.activeRideKey}`).update({ status: 'CANCELLED' });
+            }
+            document.getElementById('radarModal').classList.add('hidden');
+            speakBengali("রাইড টি বাতিল করা হয়েছে।");
+        }
+
+
+        // DRIVER LOGIC
+        function toggleDriverDuty(isOnline) {
+            appState.driverOnline = isOnline;
+            const lbl = document.getElementById('driverDutyStateLabel');
+            lbl.innerText = isOnline ? "ON DUTY (ONLINE)" : "OFF DUTY";
+            lbl.className = isOnline ? "text-lg font-black text-green-500" : "text-lg font-black text-red-500";
+
+            if (isOnline) {
+                speakBengali("আপনি এখন অনলাইন আছেন। আপনার আশেপাশের রাইড পেতে শুরু করবেন।");
+                listenDriverIncomingRides();
+            } else {
+                speakBengali("আপনি অফলাইন হয়েছেন।");
+            }
+        }
+
+        function listenDriverIncomingRides() {
+            db.ref('rides').orderByChild('status').equalTo('SEARCHING').on('value', snapshot => {
+                const feed = document.getElementById('driverRideRequestsFeed');
+                feed.innerHTML = '';
+                const data = snapshot.val();
+
+                if (!data || !appState.driverOnline) {
+                    feed.innerHTML = `<div class="bg-white p-6 rounded-3xl text-center border text-gray-400 text-xs font-semibold">Searching for nearby customer orders...</div>`;
+                    return;
+                }
+
+                Object.keys(data).forEach(key => {
+                    const ride = data[key];
+                    const card = document.createElement('div');
+                    card.className = "bg-white p-4 rounded-3xl border border-gray-200 shadow-lg space-y-3";
+                    card.innerHTML = `
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <span class="bg-yellow-400 text-black text-[10px] font-black px-2.5 py-1 rounded-full uppercase">${ride.category}</span>
+                            <span class="text-lg font-black text-green-600">₹${ride.fare}</span>
+                        </div>
+                        <div class="text-xs space-y-1">
+                            <p class="text-gray-500">Pickup: <span class="text-gray-900 font-bold">${ride.pickup}</span></p>
+                            <p class="text-gray-500">Drop: <span class="text-gray-900 font-bold">${ride.drop}</span></p>
+                        </div>
+                        <button onclick="acceptRideAsDriver('${key}')" class="w-full bg-green-600 hover:bg-green-500 text-white font-black py-3 rounded-2xl shadow">ACCEPT RIDE</button>
+                    `;
+                    feed.appendChild(card);
+                });
+
+                speakBengali("নতুন রাইড রিকোয়েস্ট পাওয়া গেছে। স্ক্রীনে দেখুন।");
+            });
+        }
+
+        function acceptRideAsDriver(rideKey) {
+            db.ref(`rides/${rideKey}`).update({
+                status: 'ACCEPTED',
+                driverPhone: "9876543210",
+                driverVehicle: "WB 24 X 5678"
+            });
+            speakBengali("রাইড টি গ্রহণ করা হয়েছে। রাইড শুরু করুন।");
+            alert("Ride Accepted! Route loaded.");
+        }
+
+        function submitDriverRegistration() {
+            const name = document.getElementById('drvRegName').value;
+            const phone = document.getElementById('drvRegPhone').value;
+            const cat = document.getElementById('drvRegVehicleCat').value;
+            const vehNo = document.getElementById('drvRegVehicleNo').value;
+
+            if (!name || !phone || !vehNo) { alert("Please complete driver details!"); return; }
+
+            db.ref('users/drivers').push({
+                name, phone, category: cat, vehicleNo: vehNo, status: 'PENDING'
+            });
+
+            speakBengali("আপনার ড্রাইভার রেজিস্ট্রেশন সফল হয়েছে। এডমিন অ্যাপ্রুভালের জন্য অপেক্ষা করুন।");
+            alert("Driver Application Submitted for Admin Approval!");
+        }
+
+
+        // SERVICES (MECHANIC & SHOP) LOGIC
+        function switchServiceSubTab(subTab) {
+            document.getElementById('srvSubMechanics').classList.toggle('hidden', subTab !== 'mechanicList');
+            document.getElementById('srvSubShops').classList.toggle('hidden', subTab !== 'shopList');
+            document.getElementById('srvSubPortal').classList.toggle('hidden', subTab !== 'providerPortal');
+
+            document.getElementById('stTabMech').className = subTab === 'mechanicList' ? 'py-2.5 rounded-xl bg-white text-black shadow' : 'py-2.5 rounded-xl text-gray-600';
+            document.getElementById('stTabShop').className = subTab === 'shopList' ? 'py-2.5 rounded-xl bg-white text-black shadow' : 'py-2.5 rounded-xl text-gray-600';
+            document.getElementById('stTabPortal').className = subTab === 'providerPortal' ? 'py-2.5 rounded-xl bg-white text-black shadow' : 'py-2.5 rounded-xl text-gray-600';
+
+            if (subTab === 'mechanicList') fetchMechanicsDirectory();
+            if (subTab === 'shopList') fetchShopsDirectory();
+        }
+
+        function fetchMechanicsDirectory() {
+            db.ref('users/providers').orderByChild('type').equalTo('Mechanic').on('value', snapshot => {
+                const dir = document.getElementById('mechanicsDirectory');
+                dir.innerHTML = '';
+                const data = snapshot.val();
+                if (!data) { dir.innerHTML = `<div class="p-6 text-center text-xs text-gray-400">No active mechanics listed nearby.</div>`; return; }
+
+                Object.keys(data).forEach(k => {
+                    const m = data[k];
+                    const card = document.createElement('div');
+                    card.className = "bg-white p-4 rounded-3xl border shadow-sm flex items-center space-x-3";
+                    card.innerHTML = `
+                        <img src="${m.photoUrl || 'https://cdn-icons-png.flaticon.com/512/1995/1995515.png'}" class="w-14 h-14 rounded-2xl object-cover bg-gray-100">
+                        <div class="flex-1">
+                            <h4 class="font-bold text-sm text-gray-900">${m.title}</h4>
+                            <p class="text-xs text-yellow-600 font-semibold">${m.category}</p>
+                            <p class="text-[11px] text-gray-500">${m.status === 'APPROVED' ? 'Phone: ' + m.phone : 'Phone Hidden (Subscription Pending)'}</p>
+                        </div>
+                    `;
+                    dir.appendChild(card);
+                });
+            });
+        }
+
+        function fetchShopsDirectory() {
+            db.ref('users/providers').orderByChild('type').equalTo('Shop').on('value', snapshot => {
+                const dir = document.getElementById('shopsDirectory');
+                dir.innerHTML = '';
+                const data = snapshot.val();
+                if (!data) { dir.innerHTML = `<div class="p-6 text-center text-xs text-gray-400">No registered shops listed nearby.</div>`; return; }
+
+                Object.keys(data).forEach(k => {
+                    const s = data[k];
+                    const card = document.createElement('div');
+                    card.className = "bg-white p-4 rounded-3xl border shadow-sm flex items-center space-x-3";
+                    card.innerHTML = `
+                        <img src="${s.photoUrl || 'https://cdn-icons-png.flaticon.com/512/3081/3081559.png'}" class="w-14 h-14 rounded-2xl object-cover bg-gray-100">
+                        <div class="flex-1">
+                            <h4 class="font-bold text-sm text-gray-900">${s.title}</h4>
+                            <p class="text-xs text-blue-600 font-semibold">${s.category}</p>
+                            <p class="text-[11px] text-gray-500">${s.status === 'APPROVED' ? 'Phone: ' + s.phone : 'Contact Suspended (Subscription Required)'}</p>
+                        </div>
+                    `;
+                    dir.appendChild(card);
+                });
+            });
+        }
+
+        function registerServiceProvider() {
+            const type = document.getElementById('spType').value;
+            const title = document.getElementById('spTitle').value;
+            const phone = document.getElementById('spPhone').value;
+            const password = document.getElementById('spPassword').value;
+            const category = document.getElementById('spCategory').value;
+            const photoUrl = document.getElementById('spPhotoUrl').value;
+
+            if (!title || !phone || !password) { alert("Please complete required fields!"); return; }
+
+            db.ref('users/providers').push({
+                type, title, phone, password, category, photoUrl, status: 'PENDING_SUBSCRIPTION'
+            });
+
+            speakBengali("রেজিস্ট্রেশন করার সময় তোমার মোবাইল নাম্বার ও পাসওয়ার্ড মনে রাখবে। পরবর্তীতে লগইন করতে প্রয়োজন হতে পারে।");
+            alert("Registration Submitted! Please pay subscription to activate phone visibility.");
+        }
+
+        function submitSubscriptionProof() {
+            const phone = document.getElementById('spSubPhone').value;
+            const txn = document.getElementById('spUpiTxnRef').value;
+
+            if (!phone || !txn) { alert("Enter Phone & UPI Ref ID!"); return; }
+
+            db.ref('subscriptions/proofs').push({
+                phone, txnRef: txn, timestamp: firebase.database.ServerValue.TIMESTAMP
+            });
+
+            speakBengali("পেমেন্ট প্রুফ জমা হয়েছে। এডমিন অতি সত্বর আপনার অ্যাকাউন্ট চালু করে দেবে।");
+            alert("Payment Proof Sent to Admin Queue!");
+        }
+
+
+        // NAVIGATION ENGINE
+        function navigateTab(tab) {
+            document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+
+            if (tab === 'customer') {
+                document.getElementById('panelCustomer').classList.remove('hidden');
+                if (map) setTimeout(() => map.invalidateSize(), 200);
+            } else if (tab === 'driver') {
+                document.getElementById('panelDriver').classList.remove('hidden');
+            } else if (tab === 'services') {
+                document.getElementById('panelServices').classList.remove('hidden');
+                switchServiceSubTab('mechanicList');
+            } else if (tab === 'history') {
+                document.getElementById('panelHistory').classList.remove('hidden');
+            } else if (tab === 'support') {
+                document.getElementById('panelSupport').classList.remove('hidden');
+            }
+
+            document.querySelectorAll('nav button').forEach(b => b.className = "flex flex-col items-center text-gray-500 space-y-0.5");
+            if (tab === 'customer') document.getElementById('navHome').className = "flex flex-col items-center text-yellow-500 space-y-0.5";
+            if (tab === 'services') document.getElementById('navServices').className = "flex flex-col items-center text-yellow-500 space-y-0.5";
+            if (tab === 'history') document.getElementById('navHistory').className = "flex flex-col items-center text-yellow-500 space-y-0.5";
+            if (tab === 'support') document.getElementById('navSupport').className = "flex flex-col items-center text-yellow-500 space-y-0.5";
+        }
+
+        function switchMainMode(mode) {
+            appState.currentMode = mode;
+            const hdr = document.getElementById('mainHeader');
+            const sub = document.getElementById('headerSubtitle');
+            const btnCust = document.getElementById('btnModeCustomer');
+            const btnDrv = document.getElementById('btnModeDriver');
+
+            if (mode === 'customer') {
+                hdr.className = "bg-yellow-400 px-4 py-3 flex items-center justify-between shadow-md z-20";
+                sub.innerText = "Customer Mode";
+                btnCust.className = "px-3.5 py-1.5 rounded-full text-xs font-bold transition-all bg-yellow-400 text-black shadow";
+                btnDrv.className = "px-3.5 py-1.5 rounded-full text-xs font-bold transition-all text-gray-300";
+                navigateTab('customer');
+            } else if (mode === 'driver') {
+                hdr.className = "bg-black text-white px-4 py-3 flex items-center justify-between shadow-md z-20 border-b border-gray-800";
+                sub.innerText = "Driver Partner Mode";
+                sub.className = "text-[11px] font-semibold text-yellow-400";
+                btnDrv.className = "px-3.5 py-1.5 rounded-full text-xs font-bold transition-all bg-yellow-400 text-black shadow";
+                btnCust.className = "px-3.5 py-1.5 rounded-full text-xs font-bold transition-all text-gray-300";
+                navigateTab('driver');
+                speakBengali("ড্রাইভারের জন্য সতর্কবার্তা: পুলিশের আওতায় আইনি ব্যবস্থা নেওয়া হতে পারে। লোগো ও গাড়ির নাম্বার মেলা ছাড়া অন্য গাড়ি চালানো নিষেধ।");
+            }
+        }
+
+        function triggerDirectCategory(cat) {
+            switchMainMode('customer');
+            selectCategory(cat);
+        }
+
+
+        // ADMIN PANEL 21-CLICK SECRET TRIGGER
+        function handleLogoSecretClicks() {
+            appState.secretClickCount++;
+            if (appState.secretClickCount >= 21) {
+                appState.secretClickCount = 0;
+                const password = prompt("Enter Secret Admin Security Password:");
+                if (password === "78764825555") {
+                    document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+                    document.getElementById('panelAdmin').classList.remove('hidden');
+                    loadAdminData();
+                    speakBengali("এডমিন প্যানেল এডিটর ওপেন করা হয়েছে।");
+                } else {
+                    alert("Unauthorized Access Password!");
+                }
+            }
+        }
+
+        function loadAdminData() {
+            db.ref('settings').once('value', snapshot => {
+                const s = snapshot.val();
+                if (s) {
+                    document.getElementById('admAppName').value = s.appName || "Public Cab";
+                    document.getElementById('admLogoUrl').value = s.logoUrl || "";
+                    document.getElementById('admUpiId').value = s.upiId || "company@upi";
+                    document.getElementById('admSubMode').value = s.subscriptionMode || "off";
+                }
+            });
+
+            const fareGrid = document.getElementById('adminFarePricingGrid');
+            fareGrid.innerHTML = '';
+            Object.keys(appState.categoryRates).forEach(cat => {
+                const r = appState.categoryRates[cat];
+                fareGrid.innerHTML += `
+                    <div class="bg-gray-900 p-2.5 rounded-xl border border-gray-700">
+                        <span class="font-bold text-yellow-400 block mb-1">${cat}</span>
+                        <div class="space-y-1">
+                            <input type="number" id="base_${cat}" value="${r.base}" placeholder="Base Rate" class="w-full bg-gray-800 p-1.5 rounded text-white text-[10px]">
+                            <input type="number" id="km_${cat}" value="${r.perKm}" placeholder="Per KM Rate" class="w-full bg-gray-800 p-1.5 rounded text-white text-[10px]">
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function saveAdminGlobalSettings() {
+            const name = document.getElementById('admAppName').value;
+            const logo = document.getElementById('admLogoUrl').value;
+            const upi = document.getElementById('admUpiId').value;
+            const subMode = document.getElementById('admSubMode').value;
+
+            db.ref('settings').update({ appName: name, logoUrl: logo, upiId: upi, subscriptionMode: subMode });
+            alert("Settings persisted to Firebase Database!");
+            syncAdminGlobalSettings();
+        }
+
+        function saveAdminFarePricing() {
+            Object.keys(appState.categoryRates).forEach(cat => {
+                const baseVal = parseFloat(document.getElementById(`base_${cat}`).value) || 0;
+                const kmVal = parseFloat(document.getElementById(`km_${cat}`).value) || 0;
+                appState.categoryRates[cat].base = baseVal;
+                appState.categoryRates[cat].perKm = kmVal;
+            });
+            db.ref('settings/fareRates').set(appState.categoryRates);
+            alert("Fare Rates Updated!");
+            renderCategoryGrid();
+        }
+
+        function syncAdminGlobalSettings() {
+            db.ref('settings').on('value', snapshot => {
+                const data = snapshot.val();
+                if (data) {
+                    if (data.appName) {
+                        document.getElementById('headerAppName').innerText = data.appName;
+                        document.getElementById('pwaBannerTitle').innerText = data.appName;
+                    }
+                    if (data.logoUrl) {
+                        document.getElementById('headerAppLogo').src = data.logoUrl;
+                        document.getElementById('pwaBannerLogo').src = data.logoUrl;
+                        document.getElementById('appFavicon').href = data.logoUrl;
+                    }
+                    if (data.upiId) document.getElementById('spDisplayUpi').innerText = data.upiId;
+                    if (data.fareRates) appState.categoryRates = data.fareRates;
+                    renderCategoryGrid();
+                }
+            });
+        }
+
+
+        // PWA ENGINE
+        function setupPWAEngine() {
+            const manifestObj = {
+                name: "Public Cab & Multi-Services",
+                short_name: "Public Cab",
+                start_url: ".",
+                display: "standalone",
+                background_color: "#000000",
+                theme_color: "#ffcc00",
+                icons: [{
+                    src: "https://cdn-icons-png.flaticon.com/512/3202/3202926.png",
+                    sizes: "512x512",
+                    type: "image/png"
+                }]
+            };
+            const stringManifest = JSON.stringify(manifestObj);
+            const blob = new Blob([stringManifest], { type: 'application/json' });
+            const manifestURL = URL.createObjectURL(blob);
+            document.getElementById('pwa-manifest').setAttribute('rel', 'manifest');
+            document.getElementById('pwa-manifest').setAttribute('href', manifestURL);
+
+            window.addEventListener('beforeinstallprompt', (e) => {
+                e.preventDefault();
+                appState.pwaDeferredPrompt = e;
+                document.getElementById('pwaInstallBanner').classList.remove('hidden');
+            });
+        }
+
+        function installPWA() {
+            if (appState.pwaDeferredPrompt) {
+                appState.pwaDeferredPrompt.prompt();
+                appState.pwaDeferredPrompt.userChoice.then(() => {
+                    appState.pwaDeferredPrompt = null;
+                    document.getElementById('pwaInstallBanner').classList.add('hidden');
+                });
+            }
+        }
+
+        function dismissPWA() {
+            document.getElementById('pwaInstallBanner').classList.add('hidden');
+        }
+
+
+        // INITIAL LOAD
+        window.onload = function() {
+            initLeafletMap();
+            renderCategoryGrid();
+            syncAdminGlobalSettings();
+            setupPWAEngine();
+
+            setTimeout(() => {
+                speakBengali("পাবলিক ক্যাব এ আপনাকে স্বাগতম। লোগো ও গাড়ির নাম্বার দেখে তবেই গাড়িতে উঠবেন।");
+            }, 1000);
+        };
+    </script>
+</body>
+</html>
+```
